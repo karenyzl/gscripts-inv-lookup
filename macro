@@ -1,0 +1,150 @@
+/**
+ * Creates a custom menu in the spreadsheet UI when the document is opened.
+ * This function runs automatically.
+ */
+function onOpen() {
+  SpreadsheetApp.getUi()
+      .createMenu('Cart Tools') // This is the name of the menu.
+      .addItem('Run Inventory Lookup', 'LookupInventoryAtCart') // This is the menu item text and the function it calls.
+      .addToUi();
+}
+
+/**
+ * Looks up inventory from a 'Products' sheet, adds it to a target sheet, and then filters the results.
+ * - Clears all existing filters on the target sheet before running.
+ * - Adds the new column and performs the lookup first.
+ * - Hides rows using a filter based on specified criteria.
+ * - Finds columns dynamically by their header name.
+ * - All settings are managed in the Configuration section.
+ * @OnlyCurrentDoc 
+ */
+function LookupInventoryAtCart() {
+  // --- Configuration ---
+  // ❗ IMPORTANT: Change these values to match your specific sheet names and headers.
+  const targetSheetName   = "Orders";                  // The sheet to be filtered and where the new column will be added.
+  const productsSheetName = "Products";                // The sheet containing the product data and inventory.
+  const newColumnHeader   = "Cart Inventory";            // The title for the new column that will be created.
+  const lookupValueColumn = "P";                       // In 'Orders', the column containing the SKU to look up (e.g., "P" for P2).
+  const lookupHeader      = "Variant SKU";               // In 'Products', the header for the column to search within.
+  
+  // Return column options in 'Products' sheet.
+  const returnHeaderOption1 = "Inventory On Hand: Cart";
+  const returnHeaderOption2 = "Inventory On Hand: Cart.com";
+
+  // --- Filter Criteria for 'Orders' Sheet ---
+  // The script will HIDE rows that match these values.
+  const filtersToApply = {
+    "Line: Type": ["Fulfillment Line"],
+    "Line: Fulfillable Quantity": ["0"],
+    "Risk: Recommendation": ["investigate", "cancel"]
+  };
+  
+  // --- Script ---
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const activeSheet = spreadsheet.getSheetByName(targetSheetName);
+  const productsSheet = spreadsheet.getSheetByName(productsSheetName);
+
+  // Stop if the required sheets don't exist.
+  if (!activeSheet) {
+    SpreadsheetApp.getUi().alert(`Error: The target sheet named "${targetSheetName}" could not be found.`);
+    return;
+  }
+  if (!productsSheet) {
+    SpreadsheetApp.getUi().alert(`Error: The products sheet named "${productsSheetName}" could not be found.`);
+    return;
+  }
+
+  // --- Clear All Existing Filters ---
+  // This is done first to ensure all subsequent operations work on the full dataset.
+  const existingFilter = activeSheet.getDataRange().getFilter();
+  if (existingFilter) {
+    existingFilter.remove();
+  }
+
+  // --- Find Columns for XLOOKUP in 'Products' Sheet ---
+  const productHeaders = productsSheet.getRange(1, 1, 1, productsSheet.getLastColumn()).getValues()[0];
+  const lookupColIndex = productHeaders.indexOf(lookupHeader);
+  
+  let returnColIndex = productHeaders.indexOf(returnHeaderOption1);
+  if (returnColIndex === -1) {
+    returnColIndex = productHeaders.indexOf(returnHeaderOption2);
+  }
+
+  // Stop if the XLOOKUP headers aren't found.
+  if (lookupColIndex === -1) {
+    SpreadsheetApp.getUi().alert(`XLOOKUP Error: The header "${lookupHeader}" was not found in the '${productsSheetName}' sheet.`);
+    return;
+  }
+  if (returnColIndex === -1) {
+    SpreadsheetApp.getUi().alert(`XLOOKUP Error: Could not find a return column named "${returnHeaderOption1}" or "${returnHeaderOption2}" in the '${productsSheetName}' sheet.`);
+    return;
+  }
+  
+  const lookupColLetter = String.fromCharCode('A'.charCodeAt(0) + lookupColIndex);
+  const returnColLetter = String.fromCharCode('A'.charCodeAt(0) + returnColIndex);
+  
+  // --- Construct the Formula ---
+  const formula = `=XLOOKUP(${lookupValueColumn}2, ${productsSheetName}!${lookupColLetter}:${lookupColLetter}, ${productsSheetName}!${returnColLetter}:${returnColLetter}, "", 0, 1)`;
+
+  // --- Execute Sheet Operations (Add Column and Formula) ---
+  const lastCol = activeSheet.getLastColumn();
+  const newColNum = lastCol + 1;
+
+  activeSheet.insertColumnsAfter(lastCol, 1);
+  activeSheet.getRange(1, newColNum)
+    .setValue(newColumnHeader)
+    .setBackground('#ffff00');
+
+  const firstDataCell = activeSheet.getRange(2, newColNum);
+  firstDataCell.setFormula(formula);
+  
+  const lastRow = activeSheet.getLastRow();
+  if (lastRow > 1) {
+    const fillRange = activeSheet.getRange(2, newColNum, lastRow - 1, 1);
+    firstDataCell.autoFill(fillRange, SpreadsheetApp.AutoFillSeries.DEFAULT_SERIES);
+  }
+
+  // Force all spreadsheet calculations to finish before filtering.
+  SpreadsheetApp.flush();
+
+  // --- Prepare 'Cart Inventory' Filter ---
+  // Get all calculated values from the new column. Use getDisplayValues() to get strings.
+  const cartInventoryValues = activeSheet.getRange(2, newColNum, lastRow - 1, 1).getDisplayValues();
+  const valuesToHideForCartInventory = [];
+  
+  // Find all unique values that are not "0" and not blank to add to the filter.
+  cartInventoryValues.forEach(row => {
+    const value = row[0];
+    if (value !== '0' && value !== '' && !valuesToHideForCartInventory.includes(value)) {
+      valuesToHideForCartInventory.push(value);
+    }
+  });
+
+  // Add the new filter condition if there are non-zero values to hide.
+  if (valuesToHideForCartInventory.length > 0) {
+    filtersToApply[newColumnHeader] = valuesToHideForCartInventory;
+  }
+
+  // --- Apply All Filters to Target Sheet ---
+  const dataRange = activeSheet.getDataRange();
+  
+  // Create a new filter for the sheet.
+  const filter = dataRange.createFilter();
+  
+  const targetHeaders = activeSheet.getRange(1, 1, 1, activeSheet.getLastColumn()).getValues()[0];
+  
+  // Apply the criteria for each specified filter.
+  for (const header in filtersToApply) {
+    const colIndex = targetHeaders.indexOf(header);
+    const valuesToHide = filtersToApply[header];
+
+    if (colIndex !== -1) {
+      const criteria = SpreadsheetApp.newFilterCriteria()
+        .setHiddenValues(valuesToHide)
+        .build();
+      filter.setColumnFilterCriteria(colIndex + 1, criteria); // Column index is 1-based for filters.
+    } else {
+      SpreadsheetApp.getUi().alert(`Filter Warning: The header "${header}" was not found in the '${targetSheetName}' sheet. This filter was skipped.`);
+    }
+  }
+}
