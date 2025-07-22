@@ -1,4 +1,4 @@
-Problem: 
+Problem:
 Support for sunsetting order management system, main use case was for 3rd party supplier to fulfill dropship order requests without giving them access to store and sensitive customer information. The supplier is in China, many of the apps they suggested do not meet CCPA or GDPR regulations.
 
 Must haves:
@@ -26,3 +26,6 @@ Solution:
 Building a script with Gemini was fairly straightforward, I knew what queries and filters I needed to apply. I refined my ask to ensure that references were based off the spreadsheet headers instead of column names, as VLOOKUP and XLOOKUP use absolute references which may be problematic if someone alters the export to add in additional columns.
 
 Publishing the script was a little more difficult. I needed to configure OAuth access and create an app listing. Fortunately the help documentation on using Google Cloud is pretty accurate. The app is published as "under testing", where I can add specific users to both the Oauth and the app test user list. The link was sent to client for them to install the app.
+
+The logo is a 5min paint scribble of a spreadsheet, required as part of listing the app.
+<img width="2027" height="1433" alt="image" src="https://github.com/user-attachments/assets/a5a49b0d-eee8-405e-ae25-8d1670d111a6" />
